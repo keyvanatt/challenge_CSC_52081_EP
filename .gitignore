@@ -20,6 +20,7 @@ venv/
 
 # Logs
 *.log
+wandb/
 
 # Database
 *.db
