@@ -28,13 +28,14 @@ def train_agent_vectorized(
     replay_buffer: ReplayBuffer,
     target_q_network_sync_period: int,
     save_every: int,
-    env_batch_size: int
+    env_batch_size: int,
+    interation_init: int
 )-> bool:
     """
     Train the Q-network on the given environment.
     Source : Lab5
     """
-    iteration = 0
+    iteration = interation_init
     episode_reward_list = []
     wandb.watch(q_network, log="all", log_freq=5)
     episode_rewards = np.zeros(env_batch_size)
@@ -128,7 +129,8 @@ def main(
     lr_decay: float = 0.995,
     min_lr: float = 5e-5,
     save_every: int = 250,
-    env_batch_size: int = 8
+    env_batch_size: int = 8,
+    load_models = None
 ):
     wandb.init(project="CSC-52081-EP", name=f"DDQN-Training-{datetime.now().strftime('%Y%m%d_%H%M%S')}")
     wandb.config.update({
@@ -162,10 +164,17 @@ def main(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    q_network = CNNEnginePolicy().to(device)
-    q_network.apply(init_weights_biased)  # Initialisation avec biais pour favoriser "Do Nothing"
-    target_q_network = CNNEnginePolicy().to(device)
-    target_q_network.load_state_dict(q_network.state_dict())
+    if load_models is not None:
+        q_network = CNNEnginePolicy().to(device)
+        q_network.load_state_dict(torch.load(load_models['q_network'], map_location=device))
+        target_q_network = CNNEnginePolicy().to(device)
+        target_q_network.load_state_dict(torch.load(load_models['target_q_network'], map_location=device))
+        print(f"Models loaded from {load_models['q_network']} and {load_models['target_q_network']}")
+    else:
+        q_network = CNNEnginePolicy().to(device)
+        q_network.apply(init_weights_biased)  # Initialisation avec biais pour favoriser "Do Nothing"
+        target_q_network = CNNEnginePolicy().to(device)
+        target_q_network.load_state_dict(q_network.state_dict())
     
     optimizer = torch.optim.Adam(q_network.parameters(), lr=learning_rate)
     loss_fn = torch.nn.SmoothL1Loss()  # Huber Loss, plus stable que MSE pour les Q-values
@@ -199,7 +208,8 @@ def main(
         replay_buffer=replay_buffer,
         target_q_network_sync_period=target_q_network_sync_period,
         save_every=save_every,
-        env_batch_size=env_batch_size
+        env_batch_size=env_batch_size,
+        interation_init =  load_models["iteration"] if load_models is not None else 0
     )
     # save final models
     torch.save(q_network.state_dict(), f"saves/ddqn_q_network_final.pth")
