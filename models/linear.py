@@ -72,3 +72,47 @@ class CEMLinearPolicy(nn.Module):
             param.data.copy_(param_update.view_as(param.data))
             
             pointer += num_param
+
+class CEMSimpleLinearPolicy(nn.Module):
+    def __init__(self, num_sensors=10, num_actions=3):
+        super(CEMSimpleLinearPolicy, self).__init__()
+        
+        self.input_dim = num_sensors
+        self.num_actions = num_actions
+        
+        self.fc = nn.Linear(self.input_dim, self.num_actions)
+        
+        for param in self.parameters():
+            param.requires_grad = False
+
+    def forward(self, x):
+        if isinstance(x, np.ndarray):
+            x = torch.tensor(x, dtype=torch.float32)
+        if x.dim() == 2:  # Cas d'un seul environnement (10, 10)
+            x = x.mean(dim=0)  # Moyenne sur les 10 timestamps pour obtenir un vecteur de taille (10,)
+        elif x.dim() == 3: # Cas vectorisé (Batch, 10, 10)
+            x = x.mean(dim=1)  # Moyenne sur les 10 timestamps pour obtenir un vecteur de taille (Batch, 10)
+            
+        logits = self.fc(x)
+        
+        if logits.dim() == 1:
+            return torch.argmax(logits).item()
+        else:
+            return torch.argmax(logits, dim=1).numpy()
+
+    
+    def get_weights(self) -> np.ndarray:
+        weights = []
+        for param in self.parameters():
+            weights.append(param.data.cpu().numpy().flatten())
+        return np.concatenate(weights)
+
+    def set_weights(self, theta: np.ndarray):
+        theta_tensor = torch.tensor(theta, dtype=torch.float32)
+        pointer = 0
+        
+        for param in self.parameters():
+            num_param = param.numel() 
+            param_update = theta_tensor[pointer : pointer + num_param]
+            param.data.copy_(param_update.view_as(param.data))
+            pointer += num_param

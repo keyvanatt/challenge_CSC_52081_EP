@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 import wandb
-from models.linear import CEMLinearPolicy
+from models.linear import CEMLinearPolicy, CEMSimpleLinearPolicy
 from concurrent.futures import ThreadPoolExecutor
 from student_client import create_student_gym_env, StudentGymEnv
 from student_client.student_gym_env_vectorized import StudentGymEnvVectorized, create_student_gym_env_vectorized
@@ -31,6 +31,8 @@ def evaluate_workers(thetas: List[np.ndarray], env: StudentGymEnvVectorized, age
     #state has shape (4, 9), we unsqueeze it to (4, 1, 9) and then tile it to (4, 10, 9) to match the expected input shape of the agents.
     state = np.expand_dims(state, axis=1)  # (4, 1, 9)
     state = np.tile(state, (1, 10, 1))  # (4, 10, 9)
+    timestamp = np.tile(np.arange(state.shape[1]), (state.shape[0], 1))
+    state = np.concatenate([state, np.expand_dims(timestamp, axis=2)], axis=2)  # (4, 10, 10)
     print(state.shape)
             
     done_i = [False] * nbr_workers
@@ -46,16 +48,19 @@ def evaluate_workers(thetas: List[np.ndarray], env: StudentGymEnvVectorized, age
         actions = np.array(actions)
         print(f"Actions : {actions}", "Done : ", done_i)
         
-        next_state, rewards, terminated, truncated, _ = env.step(actions)
+        next_state, rewards, terminated, truncated, infos = env.step(actions)
         total_reward += rewards * (~np.array(done_i))  # Ne pas accumuler les récompenses pour les épisodes déjà terminés
         print(f"Récompenses : {rewards} | Total : {total_reward}")
         
         for i in range(nbr_workers):
             if terminated[i] or truncated[i]:
                 done_i[i] = True
-                state[i] = np.zeros((10, 9))  # Remplace l'état par un état neutre pour les épisodes terminés
+                state[i] = np.zeros((10, 10))  # Remplace l'état par un état neutre pour les épisodes terminés
             else:
-                state[i] = next_state[i]
+                state[i,:,:-1] = next_state[i]
+                step = infos[i].get("step", np.nan)  # Récupère le numéro de step
+                state[i,:,-1] = np.arange(step, step+10)
+
 
         done_i = [terminated[i] or truncated[i] or done_i[i] for i in range(nbr_workers)]
 
@@ -127,22 +132,21 @@ def train_cem_vectorized(
             "fitness_values": wandb.Histogram(fitness_values)
         })
         
-        print(f"Gén {it+1:03d} | Max Local : {max_local_reward:.1f} | Moyenne Élites : {mean_elite_reward:.1f} | Bruit : {current_noise:.3f} | Max Global : {best_global_reward:.1f}")
 
     wandb.finish()
     print("\nConvergence terminée.")
     print(f"Meilleur score trouvé : {best_global_reward:.1f}")
     return best_global_theta # type: ignore
 
-def main(max_iterations: int = 150, 
+def main(max_iterations: int = 10, 
     pop_size: int = 20, 
     elite_frac: float = 0.2, 
     initial_std: float = 1.0,
-    noise_decay: float = 0.99,
+    noise_decay: float = 0.9,
     min_noise: float = 0.01):
 
     env = create_student_gym_env_vectorized(num_envs=4)
-    agents = [CEMLinearPolicy() for _ in range(4)]
+    agents = [CEMSimpleLinearPolicy(num_sensors=10) for _ in range(4)]
     logging.getLogger("student_gym_env").setLevel(logging.CRITICAL)
 
     best_weights = train_cem_vectorized(
