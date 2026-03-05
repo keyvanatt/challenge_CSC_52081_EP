@@ -119,15 +119,15 @@ def main(
     learning_rate: float = 1e-3,
     epsilon_start: float = 1.0,
     epsilon_min: float = 0.01,
-    epsilon_decay: float = 0.999,
-    replay_buffer_capacity: int = 10000,
-    max_it: int = 10000,
+    epsilon_decay: float = 0.995,
+    replay_buffer_capacity: int = 100_000,
+    max_it: int = 1500,
     gamma: float = 0.99,
-    batch_size: int = 64,
+    batch_size: int = 128,
     target_q_network_sync_period: int = 100,
-    lr_decay: float = 0.999,
+    lr_decay: float = 0.995,
     min_lr: float = 5e-5,
-    save_every: int = 500,
+    save_every: int = 250,
     env_batch_size: int = 8
 ):
     wandb.init(project="CSC-52081-EP", name=f"DDQN-Training-{datetime.now().strftime('%Y%m%d_%H%M%S')}")
