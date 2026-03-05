@@ -16,10 +16,10 @@ class CNNEnginePolicy(nn.Module):
         self.fc2 = nn.Linear(128, num_actions)
 
     def forward(self, x):
-        # 1. Gestion stricte des dimensions
-        # Entrée x de l'environnement : ex. [40, 9] -> (BatchxTemps, Capteurs)
-        # ou [10, 9] -> (Temps, Capteurs)
-    
+
+        # x est de la forme (batch, temps=10, capteurs=9) -> [4, 10, 9] si batch de 4 et 10 timesteps, sinon [1, 10, 9] si un seul batch, ou [1, 1, 9] si un seul batch et un seul timestep.
+        assert x.dim() == 3 and x.shape[1] == 10 and x.shape[2] == 9, f"Expected input of shape (batch, time=10, sensors=9), got {x.shape}"
+
         x = x.view(-1, 10, 9)
         # Maintenant x est de la forme (Batch, Temps, Capteurs) -> [4, 10, 9] si batch de 4 et 10 timesteps, sinon [1, 10, 9] si un seul batch,  ou [1, 1, 9] si un seul batch et un seul timestep.
             

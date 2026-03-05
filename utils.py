@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import gymnasium as gym
 import collections
-from typing import List, Tuple
+from typing import List, Tuple, Union
 
 """
 This module contains utility classes and functions for the Student Gym Environment package, including:
@@ -85,6 +85,7 @@ class EpsilonGreedy:
         env: gym.Env,
         q_network: torch.nn.Module,
         device: torch.device,
+        nbr_envs: int = 1,
     ):
         """
         Initialize a new instance of EpsilonGreedy.
@@ -101,6 +102,8 @@ class EpsilonGreedy:
             The environment in which the agent is acting.
         q_network : torch.nn.Module
             The Q-Network used to estimate action values.
+        nbr_envs : int, optional
+            The number of environments being trained on. Default is 1.
         """
         self.epsilon = epsilon_start
         self.epsilon_min = epsilon_min
@@ -108,8 +111,9 @@ class EpsilonGreedy:
         self.env = env
         self.q_network = q_network
         self.device = device
+        self.nbr_envs = nbr_envs    
 
-    def __call__(self, state: np.ndarray) -> np.int64:
+    def __call__(self, state: np.ndarray) -> torch.Tensor:
         """
         Select an action for the given state using the epsilon-greedy policy.
 
@@ -123,21 +127,28 @@ class EpsilonGreedy:
 
         Returns
         -------
-        np.int64
-            The chosen action.
+        torch.Tensor
+            The chosen action(s).
         """
 
         if random.random() < self.epsilon:
-            action = self.env.action_space.sample()
+            if self.nbr_envs > 1:
+                actions = torch.tensor([self.env.action_space.sample() for _ in range(self.nbr_envs)], dtype=torch.int64)
+            else:
+                actions = torch.tensor(self.env.action_space.sample(), dtype=torch.int64)
+
         else:
             with torch.no_grad():
-                state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
+                if self.nbr_envs > 1:
+                    state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device) # shape (nbr_envs, 10, 9)
+                else:
+                    state_tensor = torch.tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0) #shape (1, 10, 9)
 
                 q_values = self.q_network(state_tensor) # Compute the Q-values for the current state using the Q-network
 
-                action = torch.argmax(q_values).item() # Select the action with the highest Q-value
+                actions = torch.argmax(q_values, dim=1).detach() # Select the action with the highest Q-value
 
-        return action #type: ignore
+        return actions # Return the chosen action
 
     def decay_epsilon(self):
         """
@@ -203,6 +214,8 @@ class ReplayBuffer:
         done : bool
             The final state of the added transition.
         """
+        assert state.shape == (10, 9), f"Expected state shape (10, 9), got {state.shape}"
+        assert next_state.shape == (10, 9), f"Expected next_state shape (10, 9), got {next_state.shape}"
         self.buffer.append((state, action, reward, next_state, done))
 
     def sample(
