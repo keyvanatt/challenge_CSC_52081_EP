@@ -304,3 +304,7 @@ def evaluate_qpolicy(
         rewards.append(reward)
 
     return total_reward, rewards, observations, actions
+
+def reshape_last_state(state) -> np.ndarray:
+    repeat = [1 for _ in range(len(state)-1)] + [10-len(state)+1]
+    return np.repeat(state, repeats=repeat, axis=0)

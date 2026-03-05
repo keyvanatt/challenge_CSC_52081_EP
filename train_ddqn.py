@@ -4,7 +4,7 @@ import torch
 import gymnasium as gym
 from tqdm import tqdm
 import wandb
-from utils import EpsilonGreedy, ReplayBuffer, MinimumExponentialLR, evaluate_qpolicy
+from utils import EpsilonGreedy, ReplayBuffer, MinimumExponentialLR, reshape_last_state
 from models.cnn import CNNEnginePolicy, init_weights_biased
 from student_client import create_student_gym_env
 from student_client.student_gym_env_vectorized import StudentGymEnvVectorized, create_student_gym_env_vectorized
@@ -49,7 +49,7 @@ def train_agent_vectorized(
             reset_states, reset_infos = env.reset_specific_envs(terminated_envs)
             print(f"   Reset observations shape: {reset_states.shape}")
             for i, env_id in enumerate(terminated_envs):
-                states[env_id] = np.tile(reset_states[i], (10, 1))  # reset previous state
+                states[env_id] = np.tile(reset_states[i], (10, 1))  # ensure proper size
                 print(f"   State for env {env_id} after reset: {states[env_id].shape}")
                 episode += 1
                 wandb.log({f"episode_reward_env_{env_id}": episode_rewards[env_id], "episode_total": episode})
@@ -63,7 +63,7 @@ def train_agent_vectorized(
         for i in range(env_batch_size):
             done_i = terminateds[i] or truncateds[i]
             if done_i:
-                next_states[i] = np.tile(next_states[i], (10, 1))  # reset next state for terminated env
+                next_states[i] = reshape_last_state(next_states[i])
             try:
                 replay_buffer.add(states[i], actions[i], float(rewards[i]), next_states[i], done_i)
             except AssertionError as e:
