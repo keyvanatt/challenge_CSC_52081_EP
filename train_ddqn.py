@@ -97,7 +97,11 @@ def train_agent_vectorized(
         if iteration % target_q_network_sync_period == 0:
             target_q_network.load_state_dict(q_network.state_dict())
 
-        states = np.array(next_states)
+        try:
+            states = np.array(next_states)
+        except ValueError as e:
+            states = np.zeros((env_batch_size, 10, 9))  # fallback to zeros if next_states has inconsistent shape
+            print(f"Error updating states for next iteration: {e}")
 
         epsilon_greedy.decay_epsilon()
         if len(replay_buffer) > batch_size: # On ne fait le scheduler que si on a commencé à apprendre, sinon on perd du temps à faire du scheduler pour rien
