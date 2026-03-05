@@ -38,23 +38,23 @@ def train_agent_vectorized(
     episode_reward_list = []
     wandb.watch(q_network, log="all", log_freq=5)
     episode_rewards = np.zeros(env_batch_size)
-    state = np.zeros((env_batch_size, 10, 9))  # Initial state placeholder
+    states = np.zeros((env_batch_size, 10, 9))  # Initial state placeholder
     episode = 0
     for _ in tqdm(range(max_it)):
         # A) Check if any environments terminated
         terminated_envs = env.get_terminated_env_indices()
         if terminated_envs:
             print(f"   ⚠️  Environments {terminated_envs} terminated")
-            reset_state, reset_infos = env.reset_specific_envs(terminated_envs)
-            print(f"   Reset observations shape: {reset_state.shape}")
+            reset_states, reset_infos = env.reset_specific_envs(terminated_envs)
+            print(f"   Reset observations shape: {reset_states.shape}")
             for i, env_id in enumerate(terminated_envs):
-                state[env_id] = np.tile(reset_state[i], (10, 1))  # reset previous state
-                print(f"   State for env {env_id} after reset: {state[env_id].shape}")
+                states[env_id] = np.tile(reset_states[i], (10, 1))  # reset previous state
+                print(f"   State for env {env_id} after reset: {states[env_id].shape}")
                 episode += 1
                 wandb.log({f"episode_reward_env_{env_id}": episode_rewards[env_id], "episode_total": episode})
                 episode_rewards[env_id] = 0.0  # reset episode reward for terminated env
        
-        actions = epsilon_greedy(state)
+        actions = epsilon_greedy(states)
         actions = actions.cpu().numpy() if isinstance(actions, torch.Tensor) else np.array(actions)
         print(f"Actions chosen: {actions}")
         next_states, rewards, terminateds, truncateds, infos = env.step(actions) 
@@ -64,10 +64,10 @@ def train_agent_vectorized(
             if done_i:
                 next_states[i] = np.tile(next_states[i], (10, 1))  # reset next state for terminated env
             try:
-                replay_buffer.add(state[i], actions[i], float(rewards[i]), next_states[i], done_i)
+                replay_buffer.add(states[i], actions[i], float(rewards[i]), next_states[i], done_i)
             except AssertionError as e:
                 print(f"Error adding to replay buffer for env {i}: {e}")
-                print(f"State: {state[i]}, Action: {actions[i]}, Reward: {rewards[i]}, Next state: {next_states[i]}, Done: {done_i}")
+                print(f"State: {states[i]}, Action: {actions[i]}, Reward: {rewards[i]}, Next state: {next_states[i]}, Done: {done_i}")
                 continue
             episode_rewards[i] += float(rewards[i])
 
