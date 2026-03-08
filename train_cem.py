@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Callable, Optional
 import logging
 from typing import List
-
+import os
 
 def evaluate_workers(thetas: List[np.ndarray], env: StudentGymEnvVectorized, agents: List[ConditionalPolicy]) -> np.ndarray:
     """
@@ -26,20 +26,20 @@ def evaluate_workers(thetas: List[np.ndarray], env: StudentGymEnvVectorized, age
         
     state, _ = env.reset()
     
-    # Sécurisation de la dimension initiale si l'environnement renvoie du (4, 9)
     if state.ndim == 2 and state.shape[1] == 9:
         state = np.expand_dims(state, axis=1)  # (4, 1, 9)
         state = np.tile(state, (1, 10, 1))     # (4, 10, 9)
             
-    # 2. CORRECTION : Utilisation d'un tableau Numpy ultra-rapide
     done_i = np.zeros(nbr_workers, dtype=bool)
     step = 0    
+    
     while not np.all(done_i):
         actions = np.zeros(nbr_workers, dtype=int)
         
         for i, agent in enumerate(agents):
             if not done_i[i]:
                 actions[i] = agent(state[i])
+                
         print(f"Step {step} - Actions prises par les agents : {actions}")
         step += 1
 
@@ -76,22 +76,45 @@ def train_cem_vectorized(
     min_noise: float,
     mu_init: Optional[np.ndarray] = None
 ) -> np.ndarray:
-    theta_dim = len(agents[0].get_weights())
     
-    if mu_init is not None:
+    theta_dim = len(agents[0].get_weights())
+    checkpoint_path = "saves/cem_checkpoint.npz"
+    start_iter = 0
+
+    if os.path.exists(checkpoint_path):
+        print(f"Reprise de l'entraînement depuis {checkpoint_path}...")
+        checkpoint = np.load(checkpoint_path, allow_pickle=True)
+        
+        mu = checkpoint['mu']
+        sigma = checkpoint['sigma']
+        current_noise_vector = checkpoint['noise']
+        start_iter = int(checkpoint['iteration']) + 1
+        best_global_reward = float(checkpoint['best_reward'])
+        best_global_theta = checkpoint['best_theta']
+        
+        if best_global_theta.shape == (): 
+            best_global_theta = None
+            
+        print(f"-> Reprise à la génération {start_iter:03d}")
+        print(f"-> Record actuel à battre : {best_global_reward:.1f}")
+        
+    elif mu_init is not None:
         assert mu_init.shape == (theta_dim,)
+        print("Initialisation de la distribution CEM avec les poids fournis.")
         mu = mu_init
-        base_noise = np.abs(mu) * 0.20 + 0.05
+        current_noise_vector = np.abs(mu) * 0.20 + 0.05
+        sigma = current_noise_vector.copy()
+        best_global_reward = -np.inf
+        best_global_theta = None
+        
     else:
         mu = np.zeros(theta_dim)
-        base_noise = np.ones(theta_dim) * initial_std
-        
-    sigma = base_noise.copy()
+        current_noise_vector = np.ones(theta_dim) * initial_std
+        sigma = current_noise_vector.copy()
+        best_global_reward = -np.inf
+        best_global_theta = None
     
     num_elites = int(pop_size * elite_frac)
-    
-    best_global_reward = -np.inf
-    best_global_theta = None
     
     wandb.init(project="CSC-52081-EP", name=f"CEM-Training-{datetime.now().strftime('%Y%m%d_%H%M%S')}", config={
         "theta_dim": theta_dim,
@@ -102,15 +125,32 @@ def train_cem_vectorized(
         "noise_decay": noise_decay
     })
 
-    
     print(f"Début CEM | Paramètres : {theta_dim} | Population : {pop_size} | Élites conservées : {num_elites}")
     print(f"Max Évaluations : {max_iterations * pop_size}")
-    
-    for it in range(max_iterations):
+    for it in range(start_iter, max_iterations):
+        
+        # -- log --
+        current_normal_values = mu[0:9]
+        current_sensor_weights = mu[9:18]
+        
+        log_policy ={
+            "iteration" : it,
+            "policy/no_repair_confidence": mu[18],
+            "policy/no_sell_confidence": mu[19],
+            "policy/repair_every": mu[20],
+            "policy/sell_after": mu[21]
+        }
+        for s_idx in range(9):
+            log_policy[f"policy/normal_values_{s_idx}"] = current_normal_values[s_idx]
+            log_policy[f"policy/sensor_weights_{s_idx}"] = current_sensor_weights[s_idx]
+
+        wandb.log(log_policy)
+
+
         population = np.random.randn(pop_size, theta_dim) * sigma + mu
         fitness_values = np.zeros(pop_size)
         
-        for i in tqdm(range(0, pop_size, nbr_env)):
+        for i in tqdm(range(0, pop_size, nbr_env), desc=f"Génération {it+1}/{max_iterations}"):
             batch_thetas = population[i:i+nbr_env]
             rewards = evaluate_workers(batch_thetas, env, agents)
             fitness_values[i:i+nbr_env] = rewards
@@ -125,15 +165,11 @@ def train_cem_vectorized(
             
         mu = np.mean(elites, axis=0)
         min_noise_vector = np.maximum(min_noise, np.abs(mu) * 0.01)
-        current_noise_vector = np.maximum(min_noise_vector, base_noise * (noise_decay ** it))
-        sigma = np.std(elites, axis=0) + current_noise_vector
+        current_noise_vector = np.maximum(min_noise_vector, current_noise_vector * noise_decay)
+        sigma = np.maximum(np.std(elites, axis=0), current_noise_vector)
         
         mean_elite_reward = np.mean(fitness_values[elite_indices])
         
-
-        # -- log --
-        current_normal_values = mu[0:9]
-        current_sensor_weights = mu[9:18]
 
         log_metrics = {
             "iteration": it + 1,
@@ -142,26 +178,29 @@ def train_cem_vectorized(
             "best_global_reward": best_global_reward,
             "noise_mean": np.mean(sigma),
             "fitness_values": wandb.Histogram(fitness_values),
-            
-            "policy/no_repair_confidence": mu[18],
-            "policy/no_sell_confidence": mu[19],
-            "policy/repair_every": mu[20],
-            "policy/sell_after": mu[21]
+        
         }
-
-        for s_idx in range(9):
-            log_metrics[f"policy/normal_values_{s_idx}"] = current_normal_values[s_idx]
-            log_metrics[f"policy/sensor_weights_{s_idx}"] = current_sensor_weights[s_idx]
 
         wandb.log(log_metrics)
         
+        os.makedirs("saves", exist_ok=True)
+        np.savez(
+            checkpoint_path,
+            mu=mu,
+            sigma=sigma,
+            noise=current_noise_vector,
+            iteration=it,
+            best_reward=best_global_reward,
+            best_theta=best_global_theta if best_global_theta is not None else np.array(None)
+        )
+        print(f"Checkpoint sauvegardé à la génération {it+1}.")
 
     wandb.finish()
     print("\nConvergence terminée.")
     print(f"Meilleur score trouvé : {best_global_reward:.1f}")
     return best_global_theta # type: ignore
 
-def main(max_iterations: int = 30, 
+def main(max_iterations: int = 50, 
     pop_size: int = 20, 
     elite_frac: float = 0.2, 
     initial_std: float = 1.0,
@@ -186,8 +225,12 @@ def main(max_iterations: int = 30,
         min_noise=min_noise,
         mu_init=mu_0
     )
-    np.save("saves/cem_best_weights.npy", best_weights)
-    print("Poids optimaux sauvegardés dans 'saves/cem_best_weights.npy'.")
+    
+    if best_weights is not None:
+        np.save("saves/cem_best_weights.npy", best_weights)
+        print("Poids optimaux sauvegardés dans 'saves/cem_best_weights.npy'.")
+        
     env.close()
+
 if __name__ == "__main__":
     main()
